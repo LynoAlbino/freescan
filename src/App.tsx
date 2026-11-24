@@ -30,7 +30,7 @@ import {
   saveDocument,
   setDraft,
 } from "./lib/storage";
-import { cancelProcessing, importImage } from "./lib/processing";
+import { cancelProcessing, importImage, warmProcessing } from "./lib/processing";
 import { download, errorMessage, filename, share } from "./lib/files";
 import { I18n, useI18n, type Locale } from "./lib/i18n";
 import { usePWA } from "./lib/pwa";
@@ -166,12 +166,14 @@ function Workspace({
     setScreen("editor");
   }
   function startScan(more = false) {
+    void warmProcessing().catch(() => {});
     if (!more) setDoc(newDocument());
     append.current = more;
     setAdd(false);
     setScreen("scan");
   }
   function chooseImages(more = false, capture = false) {
+    void warmProcessing().catch(() => {});
     append.current = more;
     setAdd(false);
     (capture ? cameraInput : fileInput).current?.click();

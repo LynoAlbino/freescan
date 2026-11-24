@@ -27,7 +27,7 @@ For E2E testing on a new machine, install the matching browsers once with `npx p
 ## Scan and export
 
 1. Select **Scan Document** or **Import Images**. Multiple images become consecutive pages. Files are validated and processed sequentially; successfully imported pages are kept if a later file fails.
-2. Automatic boundary detection selects a quadrilateral and corrects perspective. Use **Crop** to refine all four corners, including by keyboard. The original photograph is preserved.
+2. Follow the live instructions to move closer/back, show all four corners, hold the phone parallel, improve lighting, or wait for focus. Automatic capture waits for a stable, usable frame. Boundary detection corrects perspective. Use **Crop → Detect edges** to retry detection on an existing scan, or refine the four corners by touch or keyboard. The original photograph is preserved.
 3. Choose Automatic, Clean Document, Black & White, Grayscale, Enhanced Color, Original, Receipt, or Whiteboard. Change brightness, contrast and sharpness, rotate, compare, duplicate, reorder, or undo edits. Editing always reprocesses the original.
 4. Add more pages. Changes are saved to IndexedDB. Reopen the app to recover an interrupted draft.
 5. Optionally recognize text. English, Hebrew, Arabic, Russian, French, German, Spanish and Italian are included, plus Portuguese, Dutch and Ukrainian. Select multiple languages or the automatic multilingual profile. Review OCR output; it is not guaranteed accurate.

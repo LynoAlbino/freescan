@@ -73,4 +73,36 @@ export const hebrewCopy: Record<string, string> = {
   "Keep just the pages you need.": "שמרו רק את העמודים הדרושים.",
   "Put everything in its place.": "סדרו את העמודים במקומם.",
   "A fresh perspective on your pages.": "סובבו את העמודים לכיוון הנכון.",
+  "Find the page": "מצאו את הדף",
+  "Detect edges": "זיהוי גבולות הדף",
+  "Finding page edges…": "מזהה את גבולות הדף…",
+  "Place one document on a flat surface with all four corners visible.":
+    "הניחו מסמך אחד על משטח שטוח כך שכל ארבע הפינות ייראו.",
+  "More light needed": "צריך יותר אור",
+  "Move to brighter light. Keep your phone's shadow off the page.":
+    "עברו למקום מואר יותר. הימנעו מהצל של הטלפון על הדף.",
+  "Show all four corners": "הציגו את כל ארבע הפינות",
+  "Use a contrasting surface and keep the whole page in view.":
+    "השתמשו במשטח בצבע שונה מהדף והשאירו את כולו בתמונה.",
+  "Move back a little": "התרחקו מעט",
+  "Leave a small border around all four edges of the page.":
+    "השאירו מעט מקום סביב כל ארבעת צדי הדף.",
+  "Move closer": "התקרבו לדף",
+  "Fill more of the camera view so small text stays sharp.":
+    "מלאו יותר מהתמונה בדף כדי שגם טקסט קטן יישאר חד.",
+  "Hold the phone flat": "החזיקו את הטלפון במקביל לדף",
+  "Keep the camera parallel to the page, directly above its center.":
+    "החזיקו את המצלמה במקביל לדף, ישירות מעל מרכזו.",
+  "Wait for a sharp image": "המתינו לתמונה חדה",
+  "Hold still and tap the page to focus if your camera supports it.":
+    "החזיקו יציב והקישו על הדף למיקוד אם המצלמה תומכת בכך.",
+  "Hold still": "החזיקו בלי לזוז",
+  "Keep the page and phone steady for a moment.":
+    "החזיקו את הדף ואת הטלפון יציבים לרגע.",
+  "The page is in position. Auto capture will take the photo.":
+    "הדף ממוקם היטב. הצילום האוטומטי יצלם אותו.",
+  "Keep the page still while the photo is saved.":
+    "השאירו את הדף יציב בזמן שמירת התמונה.",
+  "Ready to scan. Tap the capture button.":
+    "מוכן לסריקה. לחצו על כפתור הצילום.",
 };

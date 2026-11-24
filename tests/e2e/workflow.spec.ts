@@ -95,6 +95,8 @@ test("real image processing, crop, history, PDF export and library recovery", as
     .click();
   await page.getByRole("button", { name: "Crop", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Detect edges", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save crop", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Top left corner" }).focus();
   await page.keyboard.press("ArrowRight");
   await page.getByRole("button", { name: "Save crop" }).click();

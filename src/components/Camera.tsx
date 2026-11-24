@@ -9,11 +9,8 @@ import {
   Check,
   LoaderCircle,
 } from "lucide-react";
-import {
-  detectFrame,
-  cancelProcessing,
-  type Detection,
-} from "../lib/processing";
+import { detectFrame, warmProcessing, type Detection } from "../lib/processing";
+import { cameraGuidance, type CameraGuidance } from "../lib/camera-guidance";
 import { canvasBlob, errorMessage } from "../lib/files";
 import { useI18n } from "../lib/i18n";
 type ExtraCapabilities = MediaTrackCapabilities & {
@@ -36,18 +33,33 @@ export function Camera({
 }) {
   const { t } = useI18n(),
     video = useRef<HTMLVideoElement>(null),
+    stage = useRef<HTMLDivElement>(null),
     stream = useRef<MediaStream | null>(null),
     inFlight = useRef(false),
     captureRef = useRef<() => void>(() => {});
   const [facing, setFacing] = useState<"environment" | "user">("environment"),
     [error, setError] = useState(""),
     [status, setStatus] = useState("Starting camera…"),
+    [guidance, setGuidance] = useState<CameraGuidance>(cameraGuidance()),
     [detection, setDetection] = useState<Detection>(),
     [auto, setAuto] = useState(true),
     [torch, setTorch] = useState(false),
     [canTorch, setCanTorch] = useState(false),
     [busy, setBusy] = useState(false),
-    [ratio, setRatio] = useState(3 / 4);
+    [ratio, setRatio] = useState(3 / 4),
+    [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    if (!stage.current) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setStageSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      }),
+    );
+    observer.observe(stage.current);
+    return () => observer.disconnect();
+  }, []);
+  const frameWidth = Math.min(stageSize.width, stageSize.height * ratio);
   const automatic = useRef(auto);
   automatic.current = auto;
   const armed = useRef(true),
@@ -56,9 +68,12 @@ export function Camera({
     let disposed = false,
       timer: ReturnType<typeof setTimeout> | undefined,
       last: Detection | undefined,
-      stable = 0;
+      stableSince = 0;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
     async function start() {
       try {
+        void warmProcessing().catch(() => {});
         if (!navigator.mediaDevices?.getUserMedia)
           throw new Error(
             "Live camera needs HTTPS and a supported browser. Use your device camera or import an image.",
@@ -99,19 +114,25 @@ export function Camera({
     }
     async function tick() {
       if (disposed) return;
+      const started = performance.now();
       const v = video.current;
       if (v && v.readyState >= 2 && !inFlight.current) {
-        const c = document.createElement("canvas"),
-          scale = 640 / v.videoWidth;
-        c.width = 640;
-        c.height = Math.round(v.videoHeight * scale);
-        const ctx = c.getContext("2d", { willReadFrequently: true })!;
-        ctx.drawImage(v, 0, 0, c.width, c.height);
+        setRatio(v.videoWidth / v.videoHeight);
+        const scale = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight));
+        const width = Math.round(v.videoWidth * scale),
+          height = Math.round(v.videoHeight * scale);
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        ctx.drawImage(v, 0, 0, width, height);
         try {
-          const d = await detectFrame(
-            ctx.getImageData(0, 0, c.width, c.height),
-          );
+          const d = await detectFrame(ctx.getImageData(0, 0, width, height));
           if (disposed) return;
+          if (inFlight.current) {
+            timer = setTimeout(() => void tick(), 100);
+            return;
+          }
           setDetection(d);
           const movement = last
             ? Math.max(
@@ -124,27 +145,20 @@ export function Camera({
               )
             : 1;
           if (d.confidence < 0.5 || movement > 0.08) armed.current = true;
-          const good = d.confidence > 0.58 && d.blur > 45 && d.brightness > 65;
-          stable = good && movement < 0.018 ? stable + 1 : 0;
-          setStatus(
-            d.brightness < 65
-              ? "More light will help"
-              : d.confidence < 0.5
-                ? t("Position a document inside the frame")
-                : d.blur < 45
-                  ? "Image is soft. Hold still."
-                  : stable >= 2
-                    ? t("Hold steady")
-                    : "Document detected",
-          );
+          const advice = cameraGuidance(d, movement);
+          setGuidance(advice);
+          setStatus(advice.title);
+          if (!advice.ready || d.confidence < 0.6) stableSince = 0;
+          else if (!stableSince) stableSince = performance.now();
           last = d;
           if (
             automatic.current &&
             armed.current &&
-            stable >= 3 &&
-            Date.now() - lastCapture.current > 3500
+            stableSince > 0 &&
+            performance.now() - stableSince >= 450 &&
+            Date.now() - lastCapture.current > 1800
           ) {
-            stable = 0;
+            stableSince = 0;
             armed.current = false;
             captureRef.current();
           }
@@ -152,7 +166,11 @@ export function Camera({
           if (!disposed) setStatus(errorMessage(e));
         }
       }
-      if (!disposed) timer = setTimeout(() => void tick(), 600);
+      if (!disposed)
+        timer = setTimeout(
+          () => void tick(),
+          Math.max(16, 100 - (performance.now() - started)),
+        );
     }
     void start();
     return () => {
@@ -160,7 +178,8 @@ export function Camera({
       clearTimeout(timer);
       stream.current?.getTracks().forEach((t) => t.stop());
       stream.current = null;
-      cancelProcessing();
+      // Keep the initialized engine for editing and the next scan. No new
+      // frames are queued after disposal; stopping the camera releases hardware.
     };
   }, [facing, t]);
   const capture = useCallback(async () => {
@@ -261,7 +280,7 @@ export function Camera({
           <span />
         )}
       </header>
-      <div className="camera-stage">
+      <div className="camera-stage" ref={stage}>
         {error ? (
           <div className="camera-error">
             <CameraIcon size={40} />
@@ -275,7 +294,10 @@ export function Camera({
             </button>
           </div>
         ) : (
-          <div className="video-wrap" style={{ aspectRatio: ratio }}>
+          <div
+            className="video-wrap"
+            style={{ width: frameWidth, height: frameWidth / ratio }}
+          >
             <video
               ref={video}
               playsInline
@@ -293,8 +315,8 @@ export function Camera({
                   points={detection.corners
                     .map((p) => `${p.x * 100},${p.y * 100}`)
                     .join(" ")}
-                  fill="#30da9c18"
-                  stroke="#45e4b0"
+                  fill={guidance.ready ? "#30da9c10" : "#f6be4710"}
+                  stroke={guidance.ready ? "#45e4b0" : "#ffd27b"}
                   strokeWidth=".5"
                 />
                 {detection.corners.map((p, i) => (
@@ -303,16 +325,34 @@ export function Camera({
                     cx={p.x * 100}
                     cy={p.y * 100}
                     r=".9"
-                    fill="#45e4b0"
+                    fill={guidance.ready ? "#45e4b0" : "#ffd27b"}
                   />
                 ))}
               </svg>
+            )}
+            {(!detection || detection.confidence <= 0.45) && (
+              <div className="camera-target" aria-hidden="true" />
             )}
           </div>
         )}
       </div>
       <div className="camera-bottom">
-        <p role="status">{busy ? "Processing page…" : status}</p>
+        <div
+          className="camera-guidance"
+          data-ready={guidance.ready && !busy}
+          role="status"
+        >
+          <strong>{t(busy ? "Processing page…" : status)}</strong>
+          <span>
+            {busy
+              ? t("Keep the page still while the photo is saved.")
+              : t(
+                  guidance.ready && !auto
+                    ? "Ready to scan. Tap the capture button."
+                    : guidance.detail,
+                )}
+          </span>
+        </div>
         <button className="camera-mode" onClick={() => setAuto(!auto)}>
           {t(auto ? "Auto capture" : "Manual capture")}
         </button>

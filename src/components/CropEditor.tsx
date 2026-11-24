@@ -4,6 +4,8 @@ import { fullCorners } from "../types";
 import { validCorners } from "../lib/geometry";
 import { useBlobURL } from "./common";
 import { useI18n } from "../lib/i18n";
+import { detectFrame, pixels } from "../lib/processing";
+import { errorMessage } from "../lib/files";
 export function CropEditor({
   page,
   onSave,
@@ -16,9 +18,28 @@ export function CropEditor({
   const { t } = useI18n(),
     url = useBlobURL(page.original),
     [corners, setCorners] = useState<Corners>(page.edits.corners),
+    [detecting, setDetecting] = useState(false),
+    [error, setError] = useState(""),
     drag = useRef<number | null>(null),
     ref = useRef<HTMLDivElement>(null);
   const names = ["Top left", "Top right", "Bottom right", "Bottom left"];
+  async function findEdges() {
+    setDetecting(true);
+    setError("");
+    try {
+      const { image } = await pixels(page.original, 720);
+      const result = await detectFrame(image);
+      if (result.confidence <= 0.5)
+        throw new Error(
+          "No clear document boundary found. Adjust the four crop corners.",
+        );
+      setCorners(result.corners);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setDetecting(false);
+    }
+  }
   function update(i: number, x: number, y: number) {
     setCorners(
       (c) =>
@@ -98,6 +119,18 @@ export function CropEditor({
           {t("Corners cannot cross. Keep a little space between them.")}{" "}
         </p>
       )}
+      {error && (
+        <p className="error" role="alert">
+          {t(error)}
+        </p>
+      )}
+      <button
+        className="button"
+        onClick={() => void findEdges()}
+        disabled={detecting}
+      >
+        {t(detecting ? "Finding page edges…" : "Detect edges")}
+      </button>
       <div className="button-row">
         <button className="button" onClick={() => setCorners(fullCorners())}>
           {t("Full image")}
@@ -107,7 +140,7 @@ export function CropEditor({
         </button>
         <button
           className="button primary"
-          disabled={!validCorners(corners)}
+          disabled={detecting || !validCorners(corners)}
           onClick={() => onSave(corners)}
         >
           {t("Save crop")}

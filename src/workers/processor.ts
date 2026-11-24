@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
-import { orderCorners, validCorners } from "../lib/geometry";
-import { fullCorners, type Edits, type Corners } from "../types";
+import { validCorners } from "../lib/geometry";
+import { detectDocument } from "./detection";
+import { type Edits } from "../types";
 // OpenCV's generated Emscripten API is loaded only inside this dedicated worker.
 type CV = typeof import("@techstark/opencv-js");
 let cv: CV;
@@ -25,105 +26,6 @@ function initialize() {
       } else reject(new Error("OpenCV initialization failed."));
     });
   })());
-}
-function detect(image: ImageData) {
-  const owned: { delete: () => void }[] = [];
-  const own = <T extends { delete: () => void }>(m: T) => {
-    owned.push(m);
-    return m;
-  };
-  try {
-    const src = own(cv.matFromImageData(image)),
-      gray = own(new cv.Mat()),
-      blur = own(new cv.Mat()),
-      edge = own(new cv.Mat()),
-      contours = own(new cv.MatVector()),
-      hierarchy = own(new cv.Mat());
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
-    cv.Canny(blur, edge, 45, 135);
-    const kernel = own(cv.Mat.ones(3, 3, cv.CV_8U));
-    cv.morphologyEx(edge, edge, cv.MORPH_CLOSE, kernel);
-    cv.findContours(
-      edge,
-      contours,
-      hierarchy,
-      cv.RETR_LIST,
-      cv.CHAIN_APPROX_SIMPLE,
-    );
-    let best: Corners = fullCorners(),
-      confidence = 0;
-    const inspect = () => {
-      for (let i = 0; i < contours.size(); i++) {
-        const c = contours.get(i),
-          poly = new cv.Mat();
-        try {
-          const area = cv.contourArea(c);
-          if (area < image.width * image.height * 0.12) continue;
-          cv.approxPolyDP(c, poly, 0.025 * cv.arcLength(c, true), true);
-          if (poly.rows !== 4 || !cv.isContourConvex(poly)) continue;
-          const p = orderCorners(
-            Array.from({ length: 4 }, (_, j) => ({
-              x: poly.data32S[j * 2] / image.width,
-              y: poly.data32S[j * 2 + 1] / image.height,
-            })),
-          );
-          if (!validCorners(p)) continue;
-          const border = p.some(
-            (v) => v.x < 0.01 || v.x > 0.99 || v.y < 0.01 || v.y > 0.99,
-          );
-          let angle = 0;
-          for (let j = 0; j < 4; j++) {
-            const a = p[(j + 3) % 4],
-              b = p[j],
-              d = p[(j + 1) % 4];
-            const dot = (a.x - b.x) * (d.x - b.x) + (a.y - b.y) * (d.y - b.y);
-            angle += Math.abs(
-              dot /
-                (Math.hypot(a.x - b.x, a.y - b.y) *
-                  Math.hypot(d.x - b.x, d.y - b.y)),
-            );
-          }
-          const score =
-            Math.min(1, (area / (image.width * image.height)) * 1.3) * 0.7 +
-            (1 - angle / 4) * 0.3 -
-            (border ? 0.3 : 0);
-          if (score > confidence) {
-            confidence = score;
-            best = p;
-          }
-        } finally {
-          c.delete();
-          poly.delete();
-        }
-      }
-    };
-    inspect();
-    if (confidence < 0.55) {
-      cv.threshold(blur, edge, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-      cv.findContours(
-        edge,
-        contours,
-        hierarchy,
-        cv.RETR_LIST,
-        cv.CHAIN_APPROX_SIMPLE,
-      );
-      inspect();
-    }
-    const lap = own(new cv.Mat()),
-      mean = own(new cv.Mat()),
-      std = own(new cv.Mat());
-    cv.Laplacian(gray, lap, cv.CV_64F);
-    cv.meanStdDev(lap, mean, std);
-    return {
-      corners: best,
-      confidence,
-      brightness: cv.mean(gray)[0],
-      blur: std.data64F[0] ** 2,
-    };
-  } finally {
-    owned.reverse().forEach((m) => m.delete());
-  }
 }
 function process(image: ImageData, edits: Edits) {
   const owned: { delete: () => void }[] = [];
@@ -193,8 +95,7 @@ function process(image: ImageData, edits: Edits) {
     if (["bw", "receipt", "gray"].includes(mode)) {
       const out = own(new cv.Mat());
       if (mode === "gray") {
-        cv.GaussianBlur(gray, out, new cv.Size(3, 3), 0.4);
-        cv.normalize(out, out, 0, 255, cv.NORM_MINMAX);
+        cv.normalize(gray, out, 0, 255, cv.NORM_MINMAX);
       } else {
         let block = Math.min(
           mode === "receipt" ? 61 : 35,
@@ -221,20 +122,28 @@ function process(image: ImageData, edits: Edits) {
       // saturation is retained so signatures and stamps survive clean/auto modes.
       const small = own(new cv.Mat()),
         background = own(new cv.Mat());
+      // Keep the illumination model at a consistent scale. A fixed 1/16
+      // reduction made its kernel span almost half of a small document,
+      // smearing bright areas into shadows and leaving a dark border behind.
+      const backgroundScale = Math.min(1, 320 / Math.max(gray.cols, gray.rows));
       cv.resize(
         gray,
         small,
         new cv.Size(
-          Math.max(2, Math.round(gray.cols / 16)),
-          Math.max(2, Math.round(gray.rows / 16)),
+          Math.max(2, Math.round(gray.cols * backgroundScale)),
+          Math.max(2, Math.round(gray.rows * backgroundScale)),
         ),
         0,
         0,
         cv.INTER_AREA,
       );
-      const k = own(cv.Mat.ones(9, 9, cv.CV_8U));
+      const kernelSize = Math.max(
+        3,
+        2 * Math.round(Math.min(small.cols, small.rows) * 0.012) + 1,
+      );
+      const k = own(cv.Mat.ones(kernelSize, kernelSize, cv.CV_8U));
       cv.morphologyEx(small, small, cv.MORPH_CLOSE, k);
-      cv.GaussianBlur(small, small, new cv.Size(7, 7), 0);
+      cv.GaussianBlur(small, small, new cv.Size(5, 5), 0);
       cv.resize(small, background, gray.size(), 0, 0, cv.INTER_LINEAR);
       const out = own(result.clone());
       const data = out.data,
@@ -243,7 +152,7 @@ function process(image: ImageData, edits: Edits) {
         mode === "color"
           ? 0.38
           : mode === "auto"
-            ? 0.78
+            ? 0.94
             : mode === "whiteboard"
               ? 1
               : 0.93;
@@ -253,7 +162,7 @@ function process(image: ImageData, edits: Edits) {
       const avg = (sums[0] + sums[1] + sums[2]) / 3;
       for (let i = 0; i < data.length; i += 4) {
         const illumination = Math.max(45, bg[i / 4]),
-          factor = 1 + strength * (246 / illumination - 1);
+          factor = 1 + strength * (252 / illumination - 1);
         for (let c = 0; c < 3; c++) {
           const balance = Math.min(
             1.12,
@@ -306,7 +215,11 @@ self.onmessage = (event: MessageEvent) => {
     try {
       await initialize();
       const result =
-        action === "detect" ? detect(image) : process(image, edits);
+        action === "warmup"
+          ? { ready: true }
+          : action === "detect"
+            ? detectDocument(cv, image)
+            : process(image, edits);
       self.postMessage(
         { id, result },
         "data" in result ? [result.data.buffer] : [],

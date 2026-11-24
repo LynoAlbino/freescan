@@ -98,7 +98,7 @@ export const defaultEdits = (corners = fullCorners()): Edits => ({
   mode: "auto",
   brightness: 0,
   contrast: 0,
-  sharpness: 25,
+  sharpness: 12,
 });
 export const newDocument = (): ScanDocument => ({
   id: crypto.randomUUID(),

@@ -6,7 +6,6 @@ import {
   checkAbort,
   decodeImage,
   releaseImage,
-  resizeBlob,
   validateImage,
 } from "./files";
 export interface Detection {
@@ -49,7 +48,7 @@ function getWorker() {
 }
 function request<T>(
   action: string,
-  image: ImageData,
+  image?: ImageData,
   edits?: Edits,
 ): Promise<T> {
   const w = getWorker();
@@ -66,7 +65,10 @@ function request<T>(
     );
     pending.set(n, { resolve: resolve as (v: unknown) => void, reject, timer });
     try {
-      w.postMessage({ id: n, action, image, edits }, [image.data.buffer]);
+      w.postMessage(
+        { id: n, action, image, edits },
+        image ? [image.data.buffer] : [],
+      );
     } catch (error) {
       clearTimeout(timer);
       pending.delete(n);
@@ -113,27 +115,31 @@ export async function pixels(blob: Blob, maxEdge?: number) {
 }
 export const detectFrame = (image: ImageData) =>
   request<Detection>("detect", image);
+export const warmProcessing = () => request<{ ready: boolean }>("warmup");
 export async function processImage(original: Blob, edits: Edits) {
   const { image } = await pixels(original);
   const result = await request<{
     width: number;
     height: number;
-    data: Uint8ClampedArray;
+    data: Uint8ClampedArray<ArrayBuffer>;
   }>("process", image, edits);
   const c = document.createElement("canvas");
   c.width = result.width;
   c.height = result.height;
   c.getContext("2d")!.putImageData(
-    new ImageData(
-      new Uint8ClampedArray(result.data),
-      result.width,
-      result.height,
-    ),
+    new ImageData(result.data, result.width, result.height),
     0,
     0,
   );
-  const processed = await canvasBlob(c, "image/png");
-  const thumbnail = await resizeBlob(processed, 320);
+  const thumb = document.createElement("canvas");
+  const scale = Math.min(1, 320 / Math.max(c.width, c.height));
+  thumb.width = Math.max(1, Math.round(c.width * scale));
+  thumb.height = Math.max(1, Math.round(c.height * scale));
+  thumb.getContext("2d")!.drawImage(c, 0, 0, thumb.width, thumb.height);
+  const [processed, thumbnail] = await Promise.all([
+    canvasBlob(c, "image/png"),
+    canvasBlob(thumb, "image/jpeg", 0.85),
+  ]);
   return { processed, thumbnail, width: result.width, height: result.height };
 }
 export async function importImage(
